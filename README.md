@@ -3,30 +3,47 @@
 📌 Introducción
 Este proyecto es un reproductor de música en C++ que permite a los usuarios:
 ✅ Reproducir música con controles avanzados.
+
 ✅ Descargar canciones automáticamente desde YouTube con yt-dlp.
+
 ✅ Organizar canciones en una lista enlazada con inserciones en posiciones específicas.
+
 ✅ Eliminar canciones de la lista.
+
 ✅ Gestionar una biblioteca musical almacenada localmente.
 
 🔹 Está diseñado para funcionar en entornos de Windows 
 
 🚀 Tecnologías Utilizadas
 📌 Lenguaje: C++
+
 📌 Audio: BASS Audio Library (bass.dll)
+
 📌 Descargas: yt-dlp
+
 📌 Manejo de archivos: std::filesystem
+
 📌 Estructura de datos: Lista enlazada
+
 📌 Multitarea: std::thread para gestión de tiempos de espera
+
 
 📂 Estructura del Proyecto
 📦 Proyecto-Reproductor  
  ┣ 📂 musica/              # Carpeta donde se almacenan las canciones descargadas  
+ 
  ┣ 📜 main.cpp             # Código principal del proyecto  
+ 
  ┣ 📜 bass.dll             # Biblioteca BASS para reproducción de audio 
+ 
  ┣ 📜 main.exe             # Ejecutable del proyecto
+ 
  ┣ 📜 yt-dlp.exe           # Ejecutable para descarga de música  
+ 
  ┣ 📜 ffmpeg.exe           # Ejecutable que es util si yt-dlp lo usa para convertir el audio.
+ 
  ┣ 📜 README.md            # Documentación del proyecto  
+ 
  ┗ 📜 comandos.txt         # Archivo con ejemplos de comandos de ejecución  
  
 🛠 Instalación y Configuración
