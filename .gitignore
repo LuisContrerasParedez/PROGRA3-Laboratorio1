@@ -1,0 +1,4 @@
+*.exe
+*.dll
+musica/*
+.vscode/*
