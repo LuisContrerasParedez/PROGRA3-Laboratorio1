@@ -166,6 +166,7 @@ void eliminarCancion(Tlista &lista, int id)
 }
 
 // Reproducir cancion
+// Modificar la funcion para permitir control de reproduccion
 void reproducirCancion(const char *ruta, const char *artista, float duracion)
 {
     if (!BASS_Init(-1, 44100, 0, 0, NULL))
@@ -183,11 +184,63 @@ void reproducirCancion(const char *ruta, const char *artista, float duracion)
     }
 
     cout << "Reproduciendo: " << ruta << endl;
+    cout << "Artista: " << artista << endl;
+    cout << "Duracion: " << duracion << " minutos" << endl;
 
     BASS_ChannelPlay(stream, FALSE);
-    cout << "Presiona ENTER para detener la musica..." << endl;
-    cin.get();
 
+    // Menú de opciones mientras la cancion está en reproduccion
+    char opcion;
+    bool repetir = false;
+
+    do
+    {
+        cout << "\n--- CONTROLES DE REPRODUCCIoN ---\n";
+        cout << "[P] Pausar / Reanudar\n";
+        cout << "[R] Repetir en bucle\n";
+        cout << "[S] Salir de la reproduccion\n";
+        cout << "Ingrese una opcion: ";
+        cin >> opcion;
+        opcion = toupper(opcion); // Convertir a mayúscula para evitar errores
+
+        switch (opcion)
+        {
+        case 'P':
+            if (BASS_ChannelIsActive(stream) == BASS_ACTIVE_PLAYING)
+            {
+                BASS_ChannelPause(stream);
+                cout << "Cancion pausada." << endl;
+            }
+            else
+            {
+                BASS_ChannelPlay(stream, FALSE);
+                cout << "Cancion reanudada." << endl;
+            }
+            break;
+
+        case 'R':
+            cout << "La cancion se repetirá en bucle." << endl;
+            repetir = true;
+            break;
+
+        case 'S':
+            cout << "Saliendo de la reproduccion..." << endl;
+            repetir = false;
+            break;
+
+        default:
+            cout << "Opcion no válida. Intente de nuevo." << endl;
+        }
+
+        if (repetir)
+        {
+            BASS_ChannelSetPosition(stream, 0, BASS_POS_BYTE); // Reinicia la cancion
+            BASS_ChannelPlay(stream, FALSE);
+        }
+
+    } while (opcion != 'S');
+
+    // Detener y liberar el canal de audio
     BASS_ChannelStop(stream);
     BASS_StreamFree(stream);
     BASS_Free();
@@ -244,7 +297,8 @@ int main()
 
         case 2:
             cout << "Ingrese el ID de la cancion a reproducir: ";
-            cin >> id;
+            cin >> id ;
+            cout << "\n\n" << endl;
             cin.ignore();
             {
                 Tlista cancion = buscarCancion(lista, id);
@@ -266,26 +320,26 @@ int main()
             break;
 
         case 4:
-            cout << "Ingrese el nombre de la nueva canción: ";
+            cout << "Ingrese el nombre de la nueva cancion: ";
             getline(cin, nombreCancion);
             cout << "Ingrese el artista: ";
             getline(cin, artista);
-            cout << "Ingrese la posición en la que quiere agregar la canción: ";
+            cout << "Ingrese la posicion en la que quiere agregar la cancion: ";
             cin >> pos;
             cin.ignore();
 
-            // Agregar la canción a la lista con el nombre ingresado
+            // Agregar la cancion a la lista con el nombre ingresado
             insertarEnPosicion(lista, idCounter, nombreCancion, artista, 3.5, pos);
-            cout << "Canción agregada en la posición " << pos << " con el nombre: " << nombreCancion << endl;
+            cout << "Cancion agregada en la posicion " << pos << " con el nombre: " << nombreCancion << endl;
 
-            // Descargar la canción
+            // Descargar la cancion
             if (descargarCancion(nombreCancion, artista))
             {
                 cout << "Descarga completada: " << nombreCancion << endl;
             }
             else
             {
-                cout << "Error al descargar la canción." << endl;
+                cout << "Error al descargar la cancion." << endl;
             }
             break;
 
