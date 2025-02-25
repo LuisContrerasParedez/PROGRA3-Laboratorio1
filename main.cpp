@@ -4,83 +4,217 @@
 #include <filesystem>
 #include <cstdlib>
 #include <fstream>
-#include "bass.h"
 #include <chrono>
 #include <set>
 #include <thread>
+#include <limits>
+
+#include "bass.h"
+
+#ifdef _WIN32
+#include <conio.h>
+#include <windows.h>
+#endif
 
 using namespace std;
 namespace fs = std::filesystem;
 
-// Definir la estructura del nodo
+// --------------------------------------------------------------------------------------
+// Estructura de la lista
+// --------------------------------------------------------------------------------------
 struct Nodo
 {
-    int id;
-    char nombreCancion[200];
-    char artista[100];
-    float duracion; // en minutos
+    int id;                  // Identificador
+    char nombreCancion[200]; // Ruta (path) del archivo MP3
+    char artista[100];       // Artista (obtenido de metadatos si es posible)
+    float duracion;          // Duración en minutos
+    char genero[50];         // Género (obtenido de metadatos si es posible)
     Nodo *sgte;
 };
 
 typedef Nodo *Tlista;
 
-// Funcion para obtener el ultimo archivo descargado en la carpeta "musica"
-string obtenerUltimoArchivoDescargado()
+void parseID3v2Tags(const char *id3v2, string &artista, string &genero)
 {
-    string carpetaMusica = "musica/";
-    set<string> archivosAntes;
 
-    // Almacenar los archivos existentes antes de la descarga
-    for (const auto &entry : fs::directory_iterator(carpetaMusica))
+    const char *ptr = id3v2;
+    while (*ptr)
     {
-        if (entry.path().extension() == ".mp3")
+        string campo = ptr;
+        ptr += (campo.size() + 1); // Avanzamos hasta el próximo campo
+
+        // Si comienza con "TPE1=", es el artista
+        if (campo.rfind("TPE1=", 0) == 0) // rfind("str",0) verifica si "str" está al inicio
         {
-            archivosAntes.insert(entry.path().filename().string());
+            artista = campo.substr(5); // quita "TPE1="
+        }
+        else if (campo.rfind("TCON=", 0) == 0) // género
+        {
+            genero = campo.substr(5); // quita "TCON="
+        }
+    }
+}
+
+// Extrae metadatos desde un HSTREAM (BASS_STREAM_DECODE)
+void leerMetadatosID3(HSTREAM stream, string &artista, string &genero)
+{
+    // 1) Intentar ID3v1
+    const TAG_ID3 *id3v1 = (const TAG_ID3 *)BASS_ChannelGetTags(stream, BASS_TAG_ID3);
+    if (id3v1)
+    {
+        // id3v1->artist (30 chars máx.)
+        artista = id3v1->artist;
+        unsigned char genreIndex = (unsigned char)id3v1->genre;
+        // Podrías mapear el índice con la tabla oficial de ID3v1;
+        // por simplicidad, lo dejamos como "ID3v1_genreX"
+        genero = "ID3v1_genre" + to_string(genreIndex);
+        return; // Ya está
+    }
+
+    // 2) Intentar ID3v2
+    const char *id3v2 = (const char *)BASS_ChannelGetTags(stream, BASS_TAG_ID3V2);
+    if (id3v2)
+    {
+        parseID3v2Tags(id3v2, artista, genero);
+    }
+}
+
+// --------------------------------------------------------------------------------------
+void obtenerInfoCancion(const string &ruta, float &duracionMin, string &artista, string &genero)
+{
+    // Inicializa BASS en modo decode (para leer info)
+    if (!BASS_Init(-1, 44100, 0, 0, NULL))
+    {
+        cerr << "Error al inicializar BASS para obtener info de: " << ruta << endl;
+        duracionMin = 0.0f;
+        artista = "Desconocido";
+        genero = "Desconocido";
+        return;
+    }
+
+    HSTREAM stream = BASS_StreamCreateFile(FALSE, ruta.c_str(), 0, 0, BASS_STREAM_DECODE);
+    if (!stream)
+    {
+        cerr << "No se pudo abrir la cancion (para info): " << ruta << endl;
+        duracionMin = 0.0f;
+        artista = "Desconocido";
+        genero = "Desconocido";
+        BASS_Free();
+        return;
+    }
+
+    // 1) Duración
+    QWORD lengthInBytes = BASS_ChannelGetLength(stream, BASS_POS_BYTE);
+    double durationSeconds = BASS_ChannelBytes2Seconds(stream, lengthInBytes);
+    duracionMin = static_cast<float>(durationSeconds / 60.0);
+
+    // 2) Metadatos (ID3)
+    string tempArtista, tempGenero;
+    leerMetadatosID3(stream, tempArtista, tempGenero);
+
+    artista = tempArtista.empty() ? "Desconocido" : tempArtista;
+    genero = tempGenero.empty() ? "Desconocido" : tempGenero;
+
+    // Liberar
+    BASS_StreamFree(stream);
+    BASS_Free();
+}
+
+// --------------------------------------------------------------------------------------
+// Descarga la canción usando yt-dlp
+// --------------------------------------------------------------------------------------
+bool descargarCancion(const string &nombre, const string &artista)
+{
+    // Generar nombre de archivo deseado
+    string nombreArchivo = nombre + " - " + artista + ".mp3";
+
+    // Reemplazar caracteres no válidos en nombres de archivo
+    for (char &c : nombreArchivo)
+    {
+        if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|')
+        {
+            c = '_'; // Sustituimos caracteres inválidos por "_"
         }
     }
 
-    // Esperar unos segundos para asegurarnos de que la descarga se realizo
-    this_thread::sleep_for(chrono::seconds(3));
+    // Comando para descargar (yt-dlp asignará su propio nombre automáticamente)
+    string comando = "yt-dlp.exe -x --audio-format mp3 -o \"musica/%(title)s.%(ext)s\" \"ytsearch1:" + nombre + " " + artista + "\"";
 
-    // Revisar de nuevo la carpeta y encontrar el nuevo archivo
+    cout << "Ejecutando comando de descarga: " << comando << endl;
+    int resultado = system(comando.c_str());
+
+    if (resultado != 0)
+    {
+        cerr << "Error al descargar la canción." << endl;
+        return false;
+    }
+
+    // Buscar el archivo recién descargado (el más reciente en la carpeta)
+    string carpetaMusica = "musica/";
+    string archivoDescargado;
+    fs::file_time_type ultimaFecha;
+
     for (const auto &entry : fs::directory_iterator(carpetaMusica))
     {
         if (entry.path().extension() == ".mp3")
         {
-            string nombreArchivo = entry.path().filename().string();
-            if (archivosAntes.find(nombreArchivo) == archivosAntes.end())
+            auto ftime = fs::last_write_time(entry);
+            if (archivoDescargado.empty() || ftime > ultimaFecha)
             {
-                return nombreArchivo; // Este archivo no estaba antes, es el nuevo
+                ultimaFecha = ftime;
+                archivoDescargado = entry.path().filename().string();
             }
         }
     }
 
-    return "";
+    if (archivoDescargado.empty())
+    {
+        cerr << "Error: No se pudo encontrar el archivo descargado." << endl;
+        return false;
+    }
+
+    // Renombrar el archivo al formato "Nombre - Artista.mp3"
+    string rutaOriginal = carpetaMusica + archivoDescargado;
+    string rutaNueva = carpetaMusica + nombreArchivo;
+
+    try
+    {
+        fs::rename(rutaOriginal, rutaNueva);
+        cout << "Canción renombrada a: " << rutaNueva << endl;
+        return true;
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        cerr << "Error al renombrar el archivo: " << e.what() << endl;
+        return false;
+    }
 }
 
-// Descarga la cancion automaticamente con `yt-dlp`
-bool descargarCancion(const string &nombre, const string &artista)
-{
-    string busqueda = "ytsearch:" + nombre + " " + artista;
-    string comando = "yt-dlp.exe -x --audio-format mp3 -o \"musica/%(title)s.%(ext)s\" \"" + busqueda + "\"";
-    int resultado = system(comando.c_str());
-    return resultado == 0;
-}
-
-// Inserta la cancion en la lista en una posicion específica
-void insertarEnPosicion(Tlista &lista, int &idCounter, const string &nombreArchivo, const string &artista, float duracion, int pos)
+// --------------------------------------------------------------------------------------
+// Inserción en la lista enlazada
+// --------------------------------------------------------------------------------------
+void insertarEnPosicion(
+    Tlista &lista,
+    int &idCounter,
+    const string &nombreArchivo,
+    const string &artista,
+    float duracion,
+    const string &genero,
+    int pos)
 {
     Tlista nuevo = new Nodo;
     nuevo->id = idCounter++;
 
-    // Guardar la ruta del archivo descargado correctamente
-    string rutaArchivo = "musica/" + nombreArchivo;
-    strcpy(nuevo->nombreCancion, rutaArchivo.c_str());
+    // Ruta en "musica/"
+    string rutaCompleta = "musica/" + nombreArchivo;
+    strcpy(nuevo->nombreCancion, rutaCompleta.c_str());
     strcpy(nuevo->artista, artista.c_str());
     nuevo->duracion = duracion;
+    strcpy(nuevo->genero, genero.c_str());
+
     nuevo->sgte = nullptr;
 
-    // Caso 1: Insertar al inicio o cuando la lista está vacía
+    // Caso: lista vacía o insertar al inicio
     if (pos <= 1 || lista == nullptr)
     {
         nuevo->sgte = lista;
@@ -88,23 +222,22 @@ void insertarEnPosicion(Tlista &lista, int &idCounter, const string &nombreArchi
         return;
     }
 
-    // Caso 2: Insertar en una posicion específica dentro de la lista
+    // Insertar en medio/final
     Tlista temp = lista;
     int i = 1;
-
-    // Avanzamos hasta la posicion anterior a la deseada o al final de la lista
     while (temp->sgte != nullptr && i < pos - 1)
     {
         temp = temp->sgte;
         i++;
     }
 
-    // Insertamos el nuevo nodo en la posicion deseada
     nuevo->sgte = temp->sgte;
     temp->sgte = nuevo;
 }
 
-// Mostrar lista de canciones
+// --------------------------------------------------------------------------------------
+// Mostrar la lista de canciones
+// --------------------------------------------------------------------------------------
 void mostrarLista(Tlista lista)
 {
     if (lista == nullptr)
@@ -116,12 +249,19 @@ void mostrarLista(Tlista lista)
     cout << "\nLista de canciones disponibles:\n";
     while (lista != nullptr)
     {
-        cout << lista->id << " - " << lista->nombreCancion << " | "  << lista->duracion << " min\n";
+        cout << lista->id << " - "
+             << lista->nombreCancion << " | "
+             << lista->artista << " | "
+             << lista->genero << " | "
+             << lista->duracion << " min\n";
+
         lista = lista->sgte;
     }
 }
 
-// Buscar cancion por ID
+// --------------------------------------------------------------------------------------
+// Buscar canción por ID
+// --------------------------------------------------------------------------------------
 Tlista buscarCancion(Tlista lista, int id)
 {
     while (lista != nullptr)
@@ -135,7 +275,9 @@ Tlista buscarCancion(Tlista lista, int id)
     return nullptr;
 }
 
-// Eliminar cancion de la lista
+// --------------------------------------------------------------------------------------
+// Eliminar canción de la lista
+// --------------------------------------------------------------------------------------
 void eliminarCancion(Tlista &lista, int id)
 {
     Tlista temp = lista, anterior = nullptr;
@@ -154,6 +296,7 @@ void eliminarCancion(Tlista &lista, int id)
 
     if (anterior == nullptr)
     {
+        // Era el primer nodo
         lista = temp->sgte;
     }
     else
@@ -165,13 +308,15 @@ void eliminarCancion(Tlista &lista, int id)
     cout << "Cancion eliminada con exito." << endl;
 }
 
-// Reproducir cancion
-// Modificar la funcion para permitir control de reproduccion
-void reproducirCancion(const char *ruta, const char *artista, float duracion)
+// --------------------------------------------------------------------------------------
+// Reproducir canción con actualización en tiempo real
+// --------------------------------------------------------------------------------------
+void reproducirCancion(const char *ruta, const char *artista, float duracion, const char *genero)
 {
+    // Inicializa BASS
     if (!BASS_Init(-1, 44100, 0, 0, NULL))
     {
-        cerr << "Error al inicializar BASS" << endl;
+        cerr << "Error al inicializar BASS para reproducir." << endl;
         return;
     }
 
@@ -183,172 +328,274 @@ void reproducirCancion(const char *ruta, const char *artista, float duracion)
         return;
     }
 
+    // Duración real en segundos
+    QWORD lengthInBytes = BASS_ChannelGetLength(stream, BASS_POS_BYTE);
+    double totalSegundos = BASS_ChannelBytes2Seconds(stream, lengthInBytes);
+
+    cout << "----------------------------------------\n";
     cout << "Reproduciendo: " << ruta << endl;
     cout << "Artista: " << artista << endl;
-    cout << "Duracion: " << duracion << " minutos" << endl;
+    cout << "Genero: " << genero << endl;
+    cout << "Duracion (aprox.): " << duracion << " minutos\n";
+    cout << "(Segun BASS, " << totalSegundos << " segundos)\n";
+    cout << "----------------------------------------\n";
 
     BASS_ChannelPlay(stream, FALSE);
 
-    // Menú de opciones mientras la cancion está en reproduccion
-    char opcion;
+    bool detener = false;
+    bool enPausa = false;
     bool repetir = false;
 
-    do
+    cout << "\n[Controles: P = Pausar/Reanudar, R = Repetir ON/OFF, S = Parar/Salir]\n"
+         << endl;
+
+    // Bucle de reproducción
+    while (!detener)
     {
-        cout << "\n--- CONTROLES DE REPRODUCCIoN ---\n";
-        cout << "[P] Pausar / Reanudar\n";
-        cout << "[R] Repetir en bucle\n";
-        cout << "[S] Salir de la reproduccion\n";
-        cout << "Ingrese una opcion: ";
-        cin >> opcion;
-        opcion = toupper(opcion); // Convertir a mayúscula para evitar errores
-
-        switch (opcion)
+        if (!enPausa)
         {
-        case 'P':
-            if (BASS_ChannelIsActive(stream) == BASS_ACTIVE_PLAYING)
+            // Obtenemos la posición actual
+            QWORD pos = BASS_ChannelGetPosition(stream, BASS_POS_BYTE);
+            double segTranscurridos = BASS_ChannelBytes2Seconds(stream, pos);
+
+            // Convertir a mm:ss
+            int minAct = static_cast<int>(segTranscurridos / 60);
+            int segAct = static_cast<int>(segTranscurridos) % 60;
+            int minTot = static_cast<int>(totalSegundos / 60);
+            int segTot = static_cast<int>(totalSegundos) % 60;
+
+            cout << "\rTiempo: "
+                 << minAct << ":" << (segAct < 10 ? "0" : "") << segAct
+                 << " / "
+                 << minTot << ":" << (segTot < 10 ? "0" : "") << segTot
+                 << "   ";
+            cout.flush();
+
+            // Si la canción terminó (BASS_ACTIVE_STOPPED) y no está en pausa
+            if (BASS_ChannelIsActive(stream) == BASS_ACTIVE_STOPPED)
             {
-                BASS_ChannelPause(stream);
-                cout << "Cancion pausada." << endl;
+                if (repetir)
+                {
+                    // Reiniciar
+                    BASS_ChannelSetPosition(stream, 0, BASS_POS_BYTE);
+                    BASS_ChannelPlay(stream, FALSE);
+                }
+                else
+                {
+                    // Se acabó
+                    detener = true;
+                }
             }
-            else
-            {
-                BASS_ChannelPlay(stream, FALSE);
-                cout << "Cancion reanudada." << endl;
-            }
-            break;
-
-        case 'R':
-            cout << "La cancion se repetirá en bucle." << endl;
-            repetir = true;
-            break;
-
-        case 'S':
-            cout << "Saliendo de la reproduccion..." << endl;
-            repetir = false;
-            break;
-
-        default:
-            cout << "Opcion no válida. Intente de nuevo." << endl;
         }
 
-        if (repetir)
+#ifdef _WIN32
+        // Revisa si se presionó una tecla
+        if (_kbhit())
         {
-            BASS_ChannelSetPosition(stream, 0, BASS_POS_BYTE); // Reinicia la cancion
-            BASS_ChannelPlay(stream, FALSE);
+            char c = toupper(_getch());
+            switch (c)
+            {
+            case 'P':
+                if (!enPausa)
+                {
+                    BASS_ChannelPause(stream);
+                    enPausa = true;
+                }
+                else
+                {
+                    BASS_ChannelPlay(stream, FALSE);
+                    enPausa = false;
+                }
+                break;
+
+            case 'R':
+                repetir = !repetir;
+                if (repetir)
+                    cout << "\n  [Repeticion ACTIVADA]\n";
+                else
+                    cout << "\n  [Repeticion DESACTIVADA]\n";
+                break;
+
+            case 'S':
+                detener = true;
+                break;
+            }
         }
+        // Pequeña espera
+        Sleep(1000);
+#endif
+    }
 
-    } while (opcion != 'S');
-
-    // Detener y liberar el canal de audio
+    // Liberar
     BASS_ChannelStop(stream);
     BASS_StreamFree(stream);
     BASS_Free();
+
+    cout << "\nReproduccion finalizada.\n"
+         << endl;
 }
 
-// Cargar canciones desde la carpeta "musica/"
+// --------------------------------------------------------------------------------------
+// Cargar canciones existentes en "musica/" y asignar metadatos
+// --------------------------------------------------------------------------------------
 void cargarCancionesDesdeCarpeta(Tlista &lista, int &idCounter)
 {
-    string carpetaMusica = "musica/";
-
-    for (const auto &entry : fs::directory_iterator(carpetaMusica))
+    string carpeta = "musica/";
+    for (const auto &entry : fs::directory_iterator(carpeta))
     {
         if (entry.path().extension() == ".mp3")
         {
-            insertarEnPosicion(lista, idCounter, entry.path().filename().string(), "Desconocido", 3.5, idCounter);
+            string ruta = entry.path().string();                     // ruta completa
+            string nombreArchivo = entry.path().filename().string(); // "archivo.mp3"
+
+            // Obtener info (duración, artista, género)
+            float durMin;
+            string artista, genero;
+            obtenerInfoCancion(ruta, durMin, artista, genero);
+
+            // Insertar en la lista con la posición = idCounter (al final)
+            insertarEnPosicion(
+                lista,
+                idCounter,
+                nombreArchivo,
+                artista,
+                (durMin > 0.0f ? durMin : 3.5f),
+                genero,
+                idCounter);
         }
     }
-
     cout << "Canciones cargadas desde la carpeta 'musica/'." << endl;
 }
 
-// Menu principal
+// --------------------------------------------------------------------------------------
+// Menú principal
+// --------------------------------------------------------------------------------------
 void menu()
 {
     cout << "\n--- REPRODUCTOR DE MUSICA ---\n";
     cout << "1. Listar canciones\n";
     cout << "2. Reproducir una cancion\n";
     cout << "3. Eliminar una cancion\n";
-    cout << "4. Agregar una nueva cancion\n";
+    cout << "4. Agregar una nueva cancion (descargar con yt-dlp)\n";
     cout << "5. Salir\n";
     cout << "Seleccione una opcion: ";
 }
 
+// --------------------------------------------------------------------------------------
+// main
+// --------------------------------------------------------------------------------------
 int main()
 {
     Tlista lista = nullptr;
-    int opcion, id, pos, idCounter = 1;
-    string nombreCancion, artista;
+    int opcion, id, pos;
+    int idCounter = 1;
 
-    // Cargar canciones desde la carpeta automaticamente al iniciar
+    // Cargar canciones existentes en "musica/"
     cargarCancionesDesdeCarpeta(lista, idCounter);
 
     do
     {
         menu();
         cin >> opcion;
-        cin.ignore(); // Limpiar buffer
+        cin.ignore(std::numeric_limits<streamsize>::max(), '\n');
 
         switch (opcion)
         {
         case 1:
+        {
             mostrarLista(lista);
             break;
-
+        }
         case 2:
+        {
             cout << "Ingrese el ID de la cancion a reproducir: ";
-            cin >> id ;
-            cout << "\n\n" << endl;
-            cin.ignore();
-            {
-                Tlista cancion = buscarCancion(lista, id);
-                if (cancion)
-                {
-                    reproducirCancion(cancion->nombreCancion, cancion->artista, cancion->duracion);
-                }
-                else
-                {
-                    cout << "Cancion no encontrada." << endl;
-                }
-            }
-            break;
-
-        case 3:
-            cout << "Ingrese el ID de la cancion a eliminar: ";
             cin >> id;
-            eliminarCancion(lista, id);
-            break;
+            cin.ignore(std::numeric_limits<streamsize>::max(), '\n');
+            cout << "\n";
 
-        case 4:
-            cout << "Ingrese el nombre de la nueva cancion: ";
-            getline(cin, nombreCancion);
-            cout << "Ingrese el artista: ";
-            getline(cin, artista);
-            cout << "Ingrese la posicion en la que quiere agregar la cancion: ";
-            cin >> pos;
-            cin.ignore();
-
-            // Agregar la cancion a la lista con el nombre ingresado
-            insertarEnPosicion(lista, idCounter, nombreCancion, artista, 3.5, pos);
-            cout << "Cancion agregada en la posicion " << pos << " con el nombre: " << nombreCancion << endl;
-
-            // Descargar la cancion
-            if (descargarCancion(nombreCancion, artista))
+            Tlista cancion = buscarCancion(lista, id);
+            if (cancion)
             {
-                cout << "Descarga completada: " << nombreCancion << endl;
+                reproducirCancion(
+                    cancion->nombreCancion,
+                    cancion->artista,
+                    cancion->duracion,
+                    cancion->genero);
             }
             else
             {
-                cout << "Error al descargar la cancion." << endl;
+                cout << "Cancion no encontrada." << endl;
             }
             break;
-
-        case 5:
-            cout << "Saliendo del reproductor...\n";
+        }
+        case 3:
+        {
+            cout << "Ingrese el ID de la cancion a eliminar: ";
+            cin >> id;
+            cin.ignore(std::numeric_limits<streamsize>::max(), '\n');
+            eliminarCancion(lista, id);
             break;
+        }
+        case 4:
+        {
+            string nombreCancion, artista;
 
+            // Pedir datos al usuario
+            cout << "Ingrese el titulo de la canción a buscar/descargar: ";
+            getline(cin, nombreCancion);
+            cout << "Ingrese el artista: ";
+            getline(cin, artista);
+
+            // Construir el nombre esperado
+            string nombreArchivo = nombreCancion + " - " + artista + ".mp3";
+
+            // Reemplazar caracteres inválidos
+            for (char &c : nombreArchivo)
+            {
+                if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|')
+                {
+                    c = '_';
+                }
+            }
+
+            cout << "Ingrese la posición en la que quiere agregar la canción: ";
+            cin >> pos;
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+            // Descargar y renombrar
+            if (descargarCancion(nombreCancion, artista))
+            {
+                string ruta = "musica/" + nombreArchivo;
+                float durMin;
+                string artistaTag, generoTag;
+                obtenerInfoCancion(ruta, durMin, artistaTag, generoTag);
+
+                // Insertar en la lista con el nombre correcto
+                insertarEnPosicion(
+                    lista,
+                    idCounter,
+                    nombreArchivo,
+                    artistaTag,
+                    (durMin > 0.0f ? durMin : 3.5f),
+                    generoTag,
+                    pos);
+
+                cout << "Canción agregada con éxito en la posición " << pos << " con el nombre: " << nombreArchivo << endl;
+            }
+            else
+            {
+                cerr << "Error al descargar la canción." << endl;
+            }
+
+            break;
+        }
+        case 5:
+        {
+            cout << "Saliendo...\n";
+            break;
+        }
         default:
-            cout << "Opcion no valida. Intente de nuevo.\n";
+            cout << "Opcion no valida.\n";
         }
 
     } while (opcion != 5);

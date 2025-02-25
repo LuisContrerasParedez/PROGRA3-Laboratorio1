@@ -66,8 +66,5 @@ Este proyecto es un reproductor de música en C++ que permite a los usuarios:
 📌 https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-full.7z
 
 
-✅ 3. Compilar el Proyecto
-g++ main.cpp -o main.exe -I C:\MinGW\include -L . -lbass
-
-✅ 4. Ejecutar el Programa
+✅ 3. Ejecutar el Programa
 ./main.exe
