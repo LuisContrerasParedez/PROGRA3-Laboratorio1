@@ -24,11 +24,11 @@ namespace fs = std::filesystem;
 // --------------------------------------------------------------------------------------
 struct Nodo
 {
-    int id;                  // Identificador
-    char nombreCancion[200]; // Ruta (path) del archivo MP3
-    char artista[100];       // Artista (obtenido de metadatos si es posible)
-    float duracion;          // Duración en minutos
-    char genero[50];         // Género (obtenido de metadatos si es posible)
+    int id;                 
+    char nombreCancion[200]; 
+    char artista[100];       
+    float duracion;          
+    char genero[50];         
     Nodo *sgte;
 };
 
@@ -41,16 +41,15 @@ void parseID3v2Tags(const char *id3v2, string &artista, string &genero)
     while (*ptr)
     {
         string campo = ptr;
-        ptr += (campo.size() + 1); // Avanzamos hasta el próximo campo
+        ptr += (campo.size() + 1); 
 
-        // Si comienza con "TPE1=", es el artista
-        if (campo.rfind("TPE1=", 0) == 0) // rfind("str",0) verifica si "str" está al inicio
+        if (campo.rfind("TPE1=", 0) == 0) 
         {
-            artista = campo.substr(5); // quita "TPE1="
+            artista = campo.substr(5); 
         }
-        else if (campo.rfind("TCON=", 0) == 0) // género
+        else if (campo.rfind("TCON=", 0) == 0) 
         {
-            genero = campo.substr(5); // quita "TCON="
+            genero = campo.substr(5); 
         }
     }
 }
@@ -58,20 +57,15 @@ void parseID3v2Tags(const char *id3v2, string &artista, string &genero)
 // Extrae metadatos desde un HSTREAM (BASS_STREAM_DECODE)
 void leerMetadatosID3(HSTREAM stream, string &artista, string &genero)
 {
-    // 1) Intentar ID3v1
     const TAG_ID3 *id3v1 = (const TAG_ID3 *)BASS_ChannelGetTags(stream, BASS_TAG_ID3);
     if (id3v1)
     {
-        // id3v1->artist (30 chars máx.)
         artista = id3v1->artist;
         unsigned char genreIndex = (unsigned char)id3v1->genre;
-        // Podrías mapear el índice con la tabla oficial de ID3v1;
-        // por simplicidad, lo dejamos como "ID3v1_genreX"
         genero = "ID3v1_genre" + to_string(genreIndex);
-        return; // Ya está
+        return; 
     }
 
-    // 2) Intentar ID3v2
     const char *id3v2 = (const char *)BASS_ChannelGetTags(stream, BASS_TAG_ID3V2);
     if (id3v2)
     {
@@ -103,7 +97,7 @@ void obtenerInfoCancion(const string &ruta, float &duracionMin, string &artista,
         return;
     }
 
-    // 1) Duración
+    // 1) Duracion
     QWORD lengthInBytes = BASS_ChannelGetLength(stream, BASS_POS_BYTE);
     double durationSeconds = BASS_ChannelBytes2Seconds(stream, lengthInBytes);
     duracionMin = static_cast<float>(durationSeconds / 60.0);
@@ -121,23 +115,23 @@ void obtenerInfoCancion(const string &ruta, float &duracionMin, string &artista,
 }
 
 // --------------------------------------------------------------------------------------
-// Descarga la canción usando yt-dlp
+// Descarga la cancion usando yt-dlp
 // --------------------------------------------------------------------------------------
 bool descargarCancion(const string &nombre, const string &artista)
 {
     // Generar nombre de archivo deseado
     string nombreArchivo = nombre + " - " + artista + ".mp3";
 
-    // Reemplazar caracteres no válidos en nombres de archivo
+    // Reemplazar caracteres no validos en nombres de archivo
     for (char &c : nombreArchivo)
     {
         if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|')
         {
-            c = '_'; // Sustituimos caracteres inválidos por "_"
+            c = '_'; 
         }
     }
 
-    // Comando para descargar (yt-dlp asignará su propio nombre automáticamente)
+    // Comando para descargar (yt-dlp asignara su propio nombre automaticamente)
     string comando = "yt-dlp.exe -x --audio-format mp3 -o \"musica/%(title)s.%(ext)s\" \"ytsearch1:" + nombre + " " + artista + "\"";
 
     cout << "Ejecutando comando de descarga: " << comando << endl;
@@ -145,11 +139,11 @@ bool descargarCancion(const string &nombre, const string &artista)
 
     if (resultado != 0)
     {
-        cerr << "Error al descargar la canción." << endl;
+        cerr << "Error al descargar la cancion." << endl;
         return false;
     }
 
-    // Buscar el archivo recién descargado (el más reciente en la carpeta)
+    // Buscar el archivo recien descargado (el mas reciente en la carpeta)
     string carpetaMusica = "musica/";
     string archivoDescargado;
     fs::file_time_type ultimaFecha;
@@ -180,7 +174,7 @@ bool descargarCancion(const string &nombre, const string &artista)
     try
     {
         fs::rename(rutaOriginal, rutaNueva);
-        cout << "Canción renombrada a: " << rutaNueva << endl;
+        cout << "Cancion renombrada a: " << rutaNueva << endl;
         return true;
     }
     catch (const fs::filesystem_error &e)
@@ -191,7 +185,7 @@ bool descargarCancion(const string &nombre, const string &artista)
 }
 
 // --------------------------------------------------------------------------------------
-// Inserción en la lista enlazada
+// Insercion en la lista enlazada
 // --------------------------------------------------------------------------------------
 void insertarEnPosicion(
     Tlista &lista,
@@ -214,7 +208,7 @@ void insertarEnPosicion(
 
     nuevo->sgte = nullptr;
 
-    // Caso: lista vacía o insertar al inicio
+    // Caso: lista vacia o insertar al inicio
     if (pos <= 1 || lista == nullptr)
     {
         nuevo->sgte = lista;
@@ -260,7 +254,7 @@ void mostrarLista(Tlista lista)
 }
 
 // --------------------------------------------------------------------------------------
-// Buscar canción por ID
+// Buscar cancion por ID
 // --------------------------------------------------------------------------------------
 Tlista buscarCancion(Tlista lista, int id)
 {
@@ -276,7 +270,7 @@ Tlista buscarCancion(Tlista lista, int id)
 }
 
 // --------------------------------------------------------------------------------------
-// Eliminar canción de la lista
+// Eliminar cancion de la lista
 // --------------------------------------------------------------------------------------
 void eliminarCancion(Tlista &lista, int id)
 {
@@ -296,7 +290,6 @@ void eliminarCancion(Tlista &lista, int id)
 
     if (anterior == nullptr)
     {
-        // Era el primer nodo
         lista = temp->sgte;
     }
     else
@@ -309,7 +302,7 @@ void eliminarCancion(Tlista &lista, int id)
 }
 
 // --------------------------------------------------------------------------------------
-// Reproducir canción con actualización en tiempo real
+// Reproducir cancion con actualizacion en tiempo real
 // --------------------------------------------------------------------------------------
 void reproducirCancion(const char *ruta, const char *artista, float duracion, const char *genero)
 {
@@ -328,7 +321,7 @@ void reproducirCancion(const char *ruta, const char *artista, float duracion, co
         return;
     }
 
-    // Duración real en segundos
+    // Duracion real en segundos
     QWORD lengthInBytes = BASS_ChannelGetLength(stream, BASS_POS_BYTE);
     double totalSegundos = BASS_ChannelBytes2Seconds(stream, lengthInBytes);
 
@@ -349,12 +342,12 @@ void reproducirCancion(const char *ruta, const char *artista, float duracion, co
     cout << "\n[Controles: P = Pausar/Reanudar, R = Repetir ON/OFF, S = Parar/Salir]\n"
          << endl;
 
-    // Bucle de reproducción
+    // Bucle de reproduccion
     while (!detener)
     {
         if (!enPausa)
         {
-            // Obtenemos la posición actual
+            // Obtenemos la posicion actual
             QWORD pos = BASS_ChannelGetPosition(stream, BASS_POS_BYTE);
             double segTranscurridos = BASS_ChannelBytes2Seconds(stream, pos);
 
@@ -371,7 +364,7 @@ void reproducirCancion(const char *ruta, const char *artista, float duracion, co
                  << "   ";
             cout.flush();
 
-            // Si la canción terminó (BASS_ACTIVE_STOPPED) y no está en pausa
+            // Si la cancion termino (BASS_ACTIVE_STOPPED) y no esta en pausa
             if (BASS_ChannelIsActive(stream) == BASS_ACTIVE_STOPPED)
             {
                 if (repetir)
@@ -382,14 +375,13 @@ void reproducirCancion(const char *ruta, const char *artista, float duracion, co
                 }
                 else
                 {
-                    // Se acabó
                     detener = true;
                 }
             }
         }
 
 #ifdef _WIN32
-        // Revisa si se presionó una tecla
+        // Revisa si se presiono una tecla
         if (_kbhit())
         {
             char c = toupper(_getch());
@@ -421,12 +413,11 @@ void reproducirCancion(const char *ruta, const char *artista, float duracion, co
                 break;
             }
         }
-        // Pequeña espera
+    
         Sleep(1000);
 #endif
     }
 
-    // Liberar
     BASS_ChannelStop(stream);
     BASS_StreamFree(stream);
     BASS_Free();
@@ -448,12 +439,12 @@ void cargarCancionesDesdeCarpeta(Tlista &lista, int &idCounter)
             string ruta = entry.path().string();                     // ruta completa
             string nombreArchivo = entry.path().filename().string(); // "archivo.mp3"
 
-            // Obtener info (duración, artista, género)
+            // Obtener info (duracion, artista, genero)
             float durMin;
             string artista, genero;
             obtenerInfoCancion(ruta, durMin, artista, genero);
 
-            // Insertar en la lista con la posición = idCounter (al final)
+            // Insertar en la lista con la posicion = idCounter (al final)
             insertarEnPosicion(
                 lista,
                 idCounter,
@@ -468,7 +459,7 @@ void cargarCancionesDesdeCarpeta(Tlista &lista, int &idCounter)
 }
 
 // --------------------------------------------------------------------------------------
-// Menú principal
+// Menu principal
 // --------------------------------------------------------------------------------------
 void menu()
 {
@@ -541,7 +532,7 @@ int main()
             string nombreCancion, artista;
 
             // Pedir datos al usuario
-            cout << "Ingrese el titulo de la canción a buscar/descargar: ";
+            cout << "Ingrese el titulo de la cancion a buscar/descargar: ";
             getline(cin, nombreCancion);
             cout << "Ingrese el artista: ";
             getline(cin, artista);
@@ -549,7 +540,7 @@ int main()
             // Construir el nombre esperado
             string nombreArchivo = nombreCancion + " - " + artista + ".mp3";
 
-            // Reemplazar caracteres inválidos
+            // Reemplazar caracteres invalidos
             for (char &c : nombreArchivo)
             {
                 if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|')
@@ -558,7 +549,7 @@ int main()
                 }
             }
 
-            cout << "Ingrese la posición en la que quiere agregar la canción: ";
+            cout << "Ingrese la posicion en la que quiere agregar la cancion: ";
             cin >> pos;
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
 
@@ -580,11 +571,11 @@ int main()
                     generoTag,
                     pos);
 
-                cout << "Canción agregada con éxito en la posición " << pos << " con el nombre: " << nombreArchivo << endl;
+                cout << "Cancion agregada con exito en la posicion " << pos << " con el nombre: " << nombreArchivo << endl;
             }
             else
             {
-                cerr << "Error al descargar la canción." << endl;
+                cerr << "Error al descargar la cancion." << endl;
             }
 
             break;
